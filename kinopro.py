@@ -12,7 +12,7 @@ import threading
 # --- SOZLAMALAR ---
 TOKEN = "8568367157:AAFbMZLry3Wj1tjBTOqgcUIdaKCpjPrjN_k"
 ADMIN_ID = 6377391436  
-DB_URI = "postgresql://postgres:[sgja31306sgja]@db.lkndeumxfdnrtfpbmvxg.supabase.co:5432/postgres"
+DB_URI = "postgresql://postgres:[kinoprohub2026]@db.lkndeumxfdnrtfpbmvxg.supabase.co:5432/postgres"
 
 CHANNELS = {
     "@fiftnsvibe": "https://t.me/fiftnsvibe",
