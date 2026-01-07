@@ -208,23 +208,32 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_msg)) # Rasm va videolar uchun
-    import threading
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from flask import Flask
+import threading
 import os
 
-app_web = Flask(__name__)
+TOKEN = os.environ.get("8568367157:AAFbMZLry3Wj1tjBTOqgcUIdaKCpjPrjN_k")
 
-@app_web.route("/")
+app = Flask(__name__)
+
+@app.route("/")
 def home():
     return "Bot is running ✅"
 
-def run_web():
+def run_flask():
     port = int(os.environ.get("PORT", 8000))
-    app_web.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)
 
-# Flask serverni alohida thread’da ishga tushiramiz
-threading.Thread(target=run_web).start()
-    print("🚀 Bot Serverda ishga tushdi!")
-    app.run_polling()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Salom! Bot ishlayapti 🚀")
 
-if __name__ == '__main__': main()
+def run_bot():
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.run_polling()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
+    run_bot()
