@@ -208,6 +208,22 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_msg)) # Rasm va videolar uchun
+    import threading
+from flask import Flask
+import os
+
+app_web = Flask(__name__)
+
+@app_web.route("/")
+def home():
+    return "Bot is running ✅"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8000))
+    app_web.run(host="0.0.0.0", port=port)
+
+# Flask serverni alohida thread’da ishga tushiramiz
+threading.Thread(target=run_web).start()
     print("🚀 Bot Serverda ishga tushdi!")
     app.run_polling()
 
