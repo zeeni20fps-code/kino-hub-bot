@@ -14,7 +14,7 @@ TOKEN = "8568367157:AAFbMZLry3Wj1tjBTOqgcUIdaKCpjPrjN_k"
 ADMIN_ID = 6377391436  
 ADMIN_USERNAME = "onlyjasur" 
 # Supabase URI (Parolingizni [YOUR-PASSWORD] o'rniga yozing)
-DB_URI = "postgresql://postgres:[YOUR-PASSWORD]@db.lkndeumxfdnrtfpbmvxg.supabase.co:5432/postgres"
+DB_URI = "postgresql://postgres:[sgja31306sgja]@db.lkndeumxfdnrtfpbmvxg.supabase.co:5432/postgres"
 
 CHANNELS = {
     "@fiftnsvibe": "https://t.me/fiftnsvibe",
