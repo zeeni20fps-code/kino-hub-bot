@@ -39,11 +39,26 @@ def get_connection():
 def init_db():
     try:
         conn = get_connection(); cur = conn.cursor()
+        # Kinolar jadvali
         cur.execute('CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, file_id TEXT, caption TEXT)')
-        cur.execute('''CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0, 
-            last_bonus TEXT, views INTEGER DEFAULT 0, premium_until TIMESTAMP WITH TIME ZONE DEFAULT NULL)''')
+        # Foydalanuvchilar jadvali
+        cur.execute('CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT)')
+        
+        # Yetishmayotgan ustunlarni birma-bir tekshirib qo'shish
+        columns = [
+            ("balance", "INTEGER DEFAULT 0"),
+            ("views", "INTEGER DEFAULT 0"),
+            ("last_bonus", "TEXT"),
+            ("premium_until", "TIMESTAMP WITH TIME ZONE DEFAULT NULL")
+        ]
+        for col_name, col_type in columns:
+            try:
+                cur.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+            except:
+                conn.rollback() # Agar ustun bo'lsa, xatoni o'tkazib yuboradi
+        
         conn.commit(); cur.close(); conn.close()
+        print("Baza muvaffaqiyatli yangilandi! ✅")
     except Exception as e: print(f"DB Error: {e}")
 
 # --- KLAVIATURALAR ---
