@@ -127,6 +127,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['step'] = 'reklama'
 
     # FOYDALANUVCHI FUNKSIYALARI
+    # --- BU QISMNI QO'SHING ---
+    elif text == "🎬 Kino olish":
+        kanal_linki = "https://t.me/KinoHubPro"  # O'z kanalingiz linki
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🍿 Kinolarni ko'rish", url=kanal_linki)]
+        ])
+        await update.message.reply_text(
+            "🎬 Kinolarni ko'rish va kodlarni olish uchun kanalimizga o'ting:",
+            reply_markup=keyboard
+        )
+# ---------------------------
     elif text == "👤 Kabinet":
         cur.execute("SELECT balance, views FROM users WHERE user_id = %s", (user_id,))
         u = cur.fetchone()
