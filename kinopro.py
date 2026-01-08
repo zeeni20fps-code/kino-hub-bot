@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # timezone qo'shildi
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from flask import Flask
@@ -62,17 +62,21 @@ def admin_kb():
 
 # --- PREMIUM TEKSHIRISH ---
 async def check_and_update_premium(user_id, context):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT premium_until FROM users WHERE user_id = %s", (user_id,))
-    res = cur.fetchone()
-    if res and res[0]:
-        if datetime.now(res[0].tzinfo) > res[0]:
-            cur.execute("UPDATE users SET premium_until = NULL WHERE user_id = %s", (user_id,))
-            conn.commit()
-            await context.bot.send_message(user_id, "⚠️ Premium muddatingiz tugadi.")
-    cur.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT premium_until FROM users WHERE user_id = %s", (user_id,))
+        res = cur.fetchone()
+        if res and res[0]:
+            # UTC vaqtida tekshirish
+            if datetime.now(timezone.utc) > res[0]:
+                cur.execute("UPDATE users SET premium_until = NULL WHERE user_id = %s", (user_id,))
+                conn.commit()
+                await context.bot.send_message(user_id, "⚠️ Sizning Premium muddatingiz tugadi.")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Premium check error: {e}")
 
 async def is_subscribed(user_id, bot):
     if user_id == ADMIN_ID: return True
@@ -97,7 +101,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref_id = int(context.args[0])
             if ref_id != user.id:
                 cur.execute("UPDATE users SET balance = balance + 3 WHERE user_id = %s", (ref_id,))
-                try: await context.bot.send_message(ref_id, "🎉 +3 ball!")
+                try: await context.bot.send_message(ref_id, "🎉 Referal do'stingiz qo'shildi! +3 ball.")
                 except: pass
         conn.commit()
     cur.close()
@@ -106,13 +110,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_subscribed(user.id, context.bot):
         btns = [[InlineKeyboardButton(text=name, url=url)] for name, url in CHANNELS.items()]
         btns.append([InlineKeyboardButton(text="Tekshirish ✅", callback_data="check")])
-        await update.message.reply_text("👋 Obuna bo'ling:", reply_markup=InlineKeyboardMarkup(btns))
+        await update.message.reply_text("👋 Botdan foydalanish uchun kanallarga a'zo bo'ling:", reply_markup=InlineKeyboardMarkup(btns))
         return
     await update.message.reply_text("🎬 Kino kodini yuboring:", reply_markup=main_kb())
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
+    
+    if not await is_subscribed(user_id, context.bot):
+        await start(update, context)
+        return
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -123,15 +132,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bosh menyu:", reply_markup=main_kb())
 
     elif text == "💎 Premium":
-        cur.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
-        balance = cur.fetchone()[0]
-        txt = (f"💎 **KINO HUB PRO — Premium**\n\nSizning balansingiz: {balance} ball\n\n"
-               "Hozircha botimiz boshlang'ich jarayonda. Premium orqali loyihani qo'llab-quvvatlang!\n\n"
+        cur.execute("SELECT balance, premium_until FROM users WHERE user_id = %s", (user_id,))
+        u = cur.fetchone()
+        p_status = u[1].strftime("%Y-%m-%d") if u[1] else "Aktiv emas ❌"
+        txt = (f"💎 **KINO HUB PRO — Premium**\n\nSizning balansingiz: {u[0]} ball\nMuddat: {p_status}\n\n"
                "🎫 70 ball — 1 hafta\n🎫 140 ball — 1 oy")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("1 hafta (70 ball)", callback_data="buy_7")],
             [InlineKeyboardButton("1 oy (140 ball)", callback_data="buy_30")],
-            [InlineKeyboardButton("💳 Sotib olish (Admin)", url="https://t.me/onlyjasur")] # Admin bilan aloqa
+            [InlineKeyboardButton("💳 Sotib olish (Admin)", url="https://t.me/onlyjasur?text=Salom+Premium+olmoqchi+edim")]
         ])
         await update.message.reply_text(txt, reply_markup=kb, parse_mode="Markdown")
 
@@ -151,10 +160,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if movie:
             cur.execute("UPDATE users SET views = views + 1 WHERE user_id = %s", (user_id,))
             conn.commit()
-            # Kino o'zining saqlangan captioni bilan yuboriladi
             await update.message.reply_video(video=movie[0], caption=f"{movie[1]}\n\n@KinoHubPro")
         else:
-            await update.message.reply_text("😔 Topilmadi.")
+            await update.message.reply_text("😔 Bu kod bilan kino topilmadi.")
 
     cur.close()
     conn.close()
@@ -168,8 +176,9 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
-        if cur.fetchone()[0] >= cost:
-            until = datetime.now() + timedelta(days=days)
+        balance = cur.fetchone()[0]
+        if balance >= cost:
+            until = datetime.now(timezone.utc) + timedelta(days=days)
             cur.execute("UPDATE users SET balance = balance - %s, premium_until = %s WHERE user_id = %s", (cost, until, user_id))
             conn.commit()
             await query.edit_message_text(f"✅ Premium {days} kunga faollashdi!")
@@ -181,20 +190,18 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     if context.user_data.get('step') == 'add' and update.message.video:
-        code = update.message.caption # Caption kodi sifatida olinadi
-        full_caption = update.message.caption # Izoh to'liq saqlanadi
+        code = update.message.caption
         if code:
             conn = get_connection()
             cur = conn.cursor()
             cur.execute("INSERT INTO movies (code, file_id, caption) VALUES (%s, %s, %s) ON CONFLICT (code) DO UPDATE SET file_id=EXCLUDED.file_id, caption=EXCLUDED.caption", 
-                        (code, update.message.video.file_id, full_caption))
+                        (code, update.message.video.file_id, code))
             conn.commit()
             cur.close()
             conn.close()
             await update.message.reply_text(f"✅ Saqlandi: {code}")
             context.user_data['step'] = None
 
-# --- ADMIN /SEND BUYRUG'I ---
 async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     if not update.message.reply_to_message:
@@ -203,10 +210,15 @@ async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT user_id FROM users")
-    for u in cur.fetchall():
-        try: await update.message.reply_to_message.copy(chat_id=u[0]); await asyncio.sleep(0.05)
+    users = cur.fetchall()
+    count = 0
+    for u in users:
+        try: 
+            await update.message.reply_to_message.copy(chat_id=u[0])
+            count += 1
+            await asyncio.sleep(0.05)
         except: pass
-    await update.message.reply_text("✅ Yuborildi.")
+    await update.message.reply_text(f"✅ {count} kishiga yuborildi.")
     cur.close()
     conn.close()
 
@@ -216,16 +228,25 @@ async def check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         await query.message.reply_text("🎬 Bosh menyu:", reply_markup=main_kb())
     else:
-        await query.answer("❌ Obuna bo'ling!", show_alert=True)
+        await query.answer("❌ Hali obuna bo'lmagansiz!", show_alert=True)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     init_db()
+    
     app = Application.builder().token(TOKEN).build()
+    
+    # MUHIM: HANDLERLAR TARTIBI
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("send", admin_send))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_callback, pattern="check"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    # Media handler text handlerdan tepada bo'lishi kerak
     app.add_handler(MessageHandler(filters.VIDEO, handle_media))
+    
+    # Text handler eng oxirida bo'lishi shart!
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    print("🚀 Bot Polling rejimida ishga tushdi...")
     app.run_polling()
