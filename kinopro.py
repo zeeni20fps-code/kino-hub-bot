@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 import psycopg2
-from datetime import datetime, timedelta, timezone # timezone qo'shildi
+from datetime import datetime, timedelta, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from flask import Flask
@@ -31,19 +31,22 @@ def get_connection():
     return psycopg2.connect(DB_URI)
 
 def init_db():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('''CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, file_id TEXT, caption TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id BIGINT PRIMARY KEY, 
-        username TEXT, 
-        balance INTEGER DEFAULT 0, 
-        last_bonus TEXT, 
-        views INTEGER DEFAULT 0,
-        premium_until TIMESTAMP WITH TIME ZONE DEFAULT NULL)''')
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('''CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, file_id TEXT, caption TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY, 
+            username TEXT, 
+            balance INTEGER DEFAULT 0, 
+            last_bonus TEXT, 
+            views INTEGER DEFAULT 0,
+            premium_until TIMESTAMP WITH TIME ZONE DEFAULT NULL)''')
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Baza yaratishda xato: {e}")
 
 # --- KLAVIATURALAR ---
 def main_kb():
@@ -68,7 +71,6 @@ async def check_and_update_premium(user_id, context):
         cur.execute("SELECT premium_until FROM users WHERE user_id = %s", (user_id,))
         res = cur.fetchone()
         if res and res[0]:
-            # UTC vaqtida tekshirish
             if datetime.now(timezone.utc) > res[0]:
                 cur.execute("UPDATE users SET premium_until = NULL WHERE user_id = %s", (user_id,))
                 conn.commit()
@@ -148,11 +150,46 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kino videosini yuboring va captionga KODNI yozing.")
         context.user_data['step'] = 'add'
 
+    elif text == "❌ Kino o'chirish" and user_id == ADMIN_ID:
+        await update.message.reply_text("O'chiriladigan kino kodini yozing:")
+        context.user_data['step'] = 'del'
+
     elif text == "👤 Kabinet":
         cur.execute("SELECT balance, views, premium_until FROM users WHERE user_id = %s", (user_id,))
         u = cur.fetchone()
         p = "Aktiv ✅" if u[2] else "Oddiy 👤"
         await update.message.reply_text(f"👤 Kabinet:\n🆔 ID: {user_id}\n💎 Status: {p}\n💰 Balans: {u[0]} ball")
+
+    elif text == "📊 Statistika":
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        await update.message.reply_text(f"📊 Bot foydalanuvchilari soni: {count} ta")
+
+    elif text == "🎁 Bonus":
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cur.execute("SELECT last_bonus FROM users WHERE user_id = %s", (user_id,))
+        last = cur.fetchone()[0]
+        if last != today:
+            cur.execute("UPDATE users SET balance = balance + 1, last_bonus = %s WHERE user_id = %s", (today, user_id))
+            conn.commit()
+            await update.message.reply_text("🎁 Kunlik bonus +1 ball berildi!")
+        else:
+            await update.message.reply_text("❌ Bugungi bonusni olib bo'lgansiz.")
+
+    elif text == "🔗 Referal":
+        bot = await context.bot.get_me()
+        link = f"https://t.me/{bot.username}?start={user_id}"
+        await update.message.reply_text(f"🔗 Taklif havolangiz:\n{link}\n\nHar bir taklif uchun 3 ball beriladi!")
+
+    elif text == "📞 Admin":
+        await update.message.reply_text("📞 Admin bilan bog'lanish: @onlyjasur")
+
+    # ADMIN STEP: Kino o'chirish
+    elif context.user_data.get('step') == 'del' and user_id == ADMIN_ID:
+        cur.execute("DELETE FROM movies WHERE code = %s", (text,))
+        conn.commit()
+        await update.message.reply_text(f"✅ Kod {text} bo'yicha kino o'chirildi.")
+        context.user_data['step'] = None
 
     elif text.isdigit():
         cur.execute("SELECT file_id, caption FROM movies WHERE code = %s", (text,))
@@ -201,6 +238,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             await update.message.reply_text(f"✅ Saqlandi: {code}")
             context.user_data['step'] = None
+        else:
+            await update.message.reply_text("❌ Xato: Video caption qismiga kod yozing!")
 
 async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -226,7 +265,7 @@ async def check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if await is_subscribed(query.from_user.id, context.bot):
         await query.message.delete()
-        await query.message.reply_text("🎬 Bosh menyu:", reply_markup=main_kb())
+        await query.message.reply_text("🎬 Bosh menyu faollashdi. Kino kodini yuboring:", reply_markup=main_kb())
     else:
         await query.answer("❌ Hali obuna bo'lmagansiz!", show_alert=True)
 
@@ -236,16 +275,12 @@ if __name__ == "__main__":
     
     app = Application.builder().token(TOKEN).build()
     
-    # MUHIM: HANDLERLAR TARTIBI
+    # HANDLERLAR TARTIBI
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("send", admin_send))
     app.add_handler(CallbackQueryHandler(premium_callback, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_callback, pattern="check"))
-    
-    # Media handler text handlerdan tepada bo'lishi kerak
     app.add_handler(MessageHandler(filters.VIDEO, handle_media))
-    
-    # Text handler eng oxirida bo'lishi shart!
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     print("🚀 Bot Polling rejimida ishga tushdi...")
