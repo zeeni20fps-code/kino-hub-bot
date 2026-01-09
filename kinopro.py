@@ -18,6 +18,7 @@ BTN_STATS = "📊 Statistika"
 BTN_REF = "🔗 Referal"
 BTN_ADMIN_CONTACT = "📞 Admin"
 BTN_HOME = "🏠 Bosh menyu"
+BTN_ADMIN_PREMIUM = "💎 Premium Berish"
 
 # --- ASOSIY SOZLAMALAR ---
 TOKEN = "8568367157:AAFbMZLry3Wj1tjBTOqgcUIdaKCpjPrjN_k"
@@ -40,12 +41,11 @@ def get_connection():
 def init_db():
     try:
         conn = get_connection(); cur = conn.cursor()
-        # Kinolar jadvali
-        cur.execute('CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, file_id TEXT, caption TEXT)')
+        # Kinolar jadvali (Seriallar uchun PRIMARY KEY koddan olib tashlandi)
+        cur.execute('CREATE TABLE IF NOT EXISTS movies (code TEXT, file_id TEXT, caption TEXT)')
         # Foydalanuvchilar jadvali
         cur.execute('CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT)')
         
-        # Yetishmayotgan ustunlarni birma-bir tekshirib qo'shish
         columns = [
             ("balance", "INTEGER DEFAULT 0"),
             ("views", "INTEGER DEFAULT 0"),
@@ -56,7 +56,7 @@ def init_db():
             try:
                 cur.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
             except:
-                conn.rollback() # Agar ustun bo'lsa, xatoni o'tkazib yuboradi
+                conn.rollback() 
         
         conn.commit(); cur.close(); conn.close()
         print("Baza muvaffaqiyatli yangilandi! ✅")
@@ -66,7 +66,7 @@ def init_db():
 def main_kb():
     return ReplyKeyboardMarkup([
         [KeyboardButton(BTN_KINO), KeyboardButton(BTN_KABINET)],
-        [KeyboardButton(BTN_BONUS), KeyboardButton(BTN_ORDER)], # Yangi tugma shu yerda
+        [KeyboardButton(BTN_BONUS), KeyboardButton(BTN_ORDER)],
         [KeyboardButton(BTN_PREMIUM), KeyboardButton(BTN_STATS)],
         [KeyboardButton(BTN_REF), KeyboardButton(BTN_ADMIN_CONTACT)],
     ], resize_keyboard=True)
@@ -74,7 +74,8 @@ def main_kb():
 def admin_kb():
     return ReplyKeyboardMarkup([
         [KeyboardButton("➕ Kino qo'shish"), KeyboardButton("❌ Kino o'chirish")],
-        [KeyboardButton("📢 Reklama"), KeyboardButton(BTN_HOME)]
+        [KeyboardButton("📢 Reklama"), KeyboardButton(BTN_ADMIN_PREMIUM)],
+        [KeyboardButton(BTN_HOME)]
     ], resize_keyboard=True)
 
 # --- FUNKSIYALAR ---
@@ -105,7 +106,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btns.append([InlineKeyboardButton(text="Tekshirish ✅", callback_data="check")])
         await update.message.reply_text("✨ **Xush kelibsiz!**\n\nBotdan to'liq foydalanish uchun quyidagi kanallarga a'zo bo'ling va 'Tekshirish' tugmasini bosing:", reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
         return
-    await update.message.reply_text("🎥 **Kino kodini yuboring yoki menyudan foydalaning:**", reply_markup=main_kb(), parse_mode="Markdown")
+    
+    kb = admin_kb() if user.id == ADMIN_ID else main_kb()
+    await update.message.reply_text("🎥 **Kino kodini yuboring yoki menyudan foydalaning:**", reply_markup=kb, parse_mode="Markdown")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -116,20 +119,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = get_connection(); cur = conn.cursor()
     try:
-        # 1. KABINET (Tahrirlangan va Chiroyli)
+        # 1. KABINET
         if BTN_KABINET in text:
             cur.execute("SELECT balance, views, premium_until FROM users WHERE user_id = %s", (user_id,))
             u = cur.fetchone()
             if u:
-                # 1. Premium holatini aniqlash
                 is_premium = u[2] and u[2] > datetime.now(timezone.utc)
                 p = "Aktiv ✅" if is_premium else "Oddiy foydalanuvchi 👤"
-                
-                # 2. Ism yoniga toj qo'shish
                 name = update.effective_user.first_name
                 display_name = f"{name} 👑" if is_premium else name
                 
-                # 3. Xabarni yuborish
                 await update.message.reply_text(
                     f"👤 **{display_name} - Shaxsiy kabinetingiz:**\n\n"
                     f"🆔 **ID:** `{user_id}`\n"
@@ -140,27 +139,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
 
-        # 5-funksiya: Kino buyurtma berish (Buni KABINETdan keyingi elif qilib qo'shing)
+        # 2. BUYURTMA TUGMASI
         elif text == BTN_ORDER:
             cur.execute("SELECT premium_until FROM users WHERE user_id = %s", (user_id,))
             u = cur.fetchone()
             if u[0] and u[0] > datetime.now(timezone.utc):
-                await update.message.reply_text("🎬 **Kino buyurtma berish:**\nIltimos, qidirayotgan kino nomini yozib yuboring. Adminlar uni tez orada topib yuklashadi.")
+                await update.message.reply_text("🎬 **Kino buyurtma berish:**\nIltimos, qidirayotgan kino nomini yozib yuboring.")
                 context.user_data['step'] = 'waiting_order'
             else:
                 await update.message.reply_text("❌ **Kechirasiz!**\nKino buyurtma berish funksiyasi faqat **Premium** foydalanuvchilar uchun amal qiladi.")
 
-        # Buyurtma matnini qabul qilish
+        # BUYURTMA QABUL QILISH
         elif context.user_data.get('step') == 'waiting_order':
             order_text = text
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"🔔 **YANGI BUYURTMA!**\n\n👤 Foydalanuvchi: {update.effective_user.first_name}\n🆔 ID: `{user_id}`\n📝 Kino nomi: {order_text}"
-            )
-            await update.message.reply_text("✅ **Buyurtmangiz qabul qilindi!**\nAdminlar ko'rib chiqib bazaga qo'shishadi.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"🔔 **YANGI BUYURTMA!**\n\n👤 Foydalanuvchi: {update.effective_user.first_name}\n🆔 ID: `{user_id}`\n📝 Kino nomi: {order_text}")
+            await update.message.reply_text("✅ **Buyurtmangiz qabul qilindi!**")
             context.user_data['step'] = None
             
-        # 2. PREMIUM
+        # 3. PREMIUM
         elif BTN_PREMIUM in text:
             cur.execute("SELECT balance, premium_until FROM users WHERE user_id = %s", (user_id,))
             u = cur.fetchone()
@@ -168,7 +164,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             txt = (f"💎 **Premium Markazi**\n\n"
                    f"Sizning balansingiz: `{u[0]}` ball\n"
                    f"Amal qilish muddati: `{p_status}`\n\n"
-                   f"Premium afzalliklari:\n✨ Reklamasiz foydalanish\n✨ Maxfiy kinolarga kirish")
+                   f"Premium afzalliklari:\n✨ Reklamasiz foydalanish\n✨ Maxfiy kinolarga kirish\n✨ Shaxsiy buyurtma berish")
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💳 1 hafta (70 ball)", callback_data="buy_7")],
                 [InlineKeyboardButton("💳 1 oy (140 ball)", callback_data="buy_30")],
@@ -176,154 +172,117 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await update.message.reply_text(txt, reply_markup=kb, parse_mode="Markdown")
 
-        # 3. KINO OLISH
+        # 4. KINO OLISH
         elif BTN_KINO in text:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎬 Kino kodlari kanali", url="https://t.me/KinoHubPro")]])
             await update.message.reply_text("👇 **Kino kodlarini bizning rasmiy kanalimizdan topishingiz mumkin:**", reply_markup=kb, parse_mode="Markdown")
 
-        # 4. BONUS
+        # 5. BONUS
         elif BTN_BONUS in text:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             cur.execute("SELECT last_bonus FROM users WHERE user_id = %s", (user_id,))
             last_bonus_date = cur.fetchone()[0]
             if last_bonus_date != today:
                 cur.execute("UPDATE users SET balance = balance + 1, last_bonus = %s WHERE user_id = %s", (today, user_id))
-                conn.commit(); await update.message.reply_text("🎁 **Tabriklaymiz!**\nSizga bugun uchun +1 ball taqdim etildi. Ertaga yana qaytib keling!", parse_mode="Markdown")
-            else: await update.message.reply_text("❌ **Bugun bonus olib bo'lingan.**\nErtaga yangi kun kelishini kuting!", parse_mode="Markdown")
+                conn.commit(); await update.message.reply_text("🎁 **Tabriklaymiz!**\nSizga +1 ball taqdim etildi!", parse_mode="Markdown")
+            else: await update.message.reply_text("❌ Bugun bonus olib bo'lingan.", parse_mode="Markdown")
 
-        # 5. STATISTIKA
+        # 6. STATISTIKA
         elif BTN_STATS in text:
             cur.execute("SELECT COUNT(*) FROM users"); u_c = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM movies"); m_c = cur.fetchone()[0]
             await update.message.reply_text(f"📊 **Bot Statistikasi:**\n\n👤 Foydalanuvchilar: {u_c} ta\n🎬 Bazadagi kinolar: {m_c} ta", parse_mode="Markdown")
 
-        # 6. REFERAL
+        # 7. REFERAL
         elif BTN_REF in text:
             b = await context.bot.get_me()
-            await update.message.reply_text(f"🔗 **Sizning referal havolangiz:**\n\nhttps://t.me/{b.username}?start={user_id}\n\nHar bir taklif qilingan do'stingiz uchun 3 ball olasiz!", parse_mode="Markdown")
+            await update.message.reply_text(f"🔗 **Sizning referal havolangiz:**\n\nhttps://t.me/{b.username}?start={user_id}\n\nHar bir do'stingiz uchun 3 ball olasiz!", parse_mode="Markdown")
 
-        # 7. ADMIN TUGMALARI
-        elif BTN_ADMIN_CONTACT in text: await update.message.reply_text("👨‍💻 Savollar va murojaatlar uchun: @onlyjasur")
-        elif BTN_HOME in text: await update.message.reply_text("🏠 Asosiy menyuga qaytdingiz.", reply_markup=main_kb())
+        # 8. ADMIN TUGMALARI
+        elif BTN_ADMIN_CONTACT in text: await update.message.reply_text("👨‍💻 Savollar uchun: @onlyjasur")
+        elif BTN_HOME in text: 
+            kb = admin_kb() if user_id == ADMIN_ID else main_kb()
+            await update.message.reply_text("🏠 Asosiy menyu.", reply_markup=kb)
+
+        elif text == BTN_ADMIN_PREMIUM and user_id == ADMIN_ID:
+            await update.message.reply_text("💎 **Premium Berish:**\n\n`/set_premium ID KUN` \n\nMisol: `/set_premium 1234567 30`", parse_mode="Markdown")
 
         elif text == "➕ Kino qo'shish" and user_id == ADMIN_ID:
-            await update.message.reply_text(
-                "🎬 **Kino qo'shish bo'yicha yo'riqnoma:**\n\n"
-                "1. Kinoni botga yuboring yoki mavjud videoga **Reply** qiling.\n"
-                "2. Reply xabariga quyidagicha yozing:\n"
-                "`/add_movie kod Kino nomi va qismi` \n\n"
-                "💡 *Misol:* `/add_movie 101 Welcome to Derry 1-qism` \n\n"
-                "Shunda bot foydalanuvchiga kino kodi bilan birga nomini ham chiqarib beradi.", 
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("🎬 Videoga reply qilib yozing:\n`/add_movie kod Kino nomi`", parse_mode="Markdown")
             
         elif text == "❌ Kino o'chirish" and user_id == ADMIN_ID:
-            await update.message.reply_text("🗑 **O'chirmoqchi bo'lgan kino kodini yozing:**"); context.user_data['step'] = 'del'
+            await update.message.reply_text("🗑 O'chirmoqchi bo'lgan kino kodini yozing:"); context.user_data['step'] = 'del'
 
         elif text == "📢 Reklama" and user_id == ADMIN_ID:
-            await update.message.reply_text("📢 **Reklama tarqatish uchun:**\nXabarga reply qilib `/send` deb yozing.", parse_mode="Markdown")
+            await update.message.reply_text("📢 Xabarga reply qilib `/send` deb yozing.", parse_mode="Markdown")
 
         elif context.user_data.get('step') == 'del' and user_id == ADMIN_ID:
             cur.execute("DELETE FROM movies WHERE code = %s", (text,)); conn.commit()
-            await update.message.reply_text(f"✅ Kod `{text}` bo'lgan kino o'chirildi."); context.user_data['step'] = None
+            await update.message.reply_text(f"✅ Kod `{text}` o'chirildi."); context.user_data['step'] = None
 
-        # 8. KINO QIDIRISH (Mavjud bo'lmasa chiroyli javob)
+        # 9. KINO QIDIRISH (SERIAL TIZIMI BILAN)
         elif text.isdigit():
-            cur.execute("SELECT file_id FROM movies WHERE code = %s", (text,))
-            m = cur.fetchone()
-            if m:
+            cur.execute("SELECT file_id, caption FROM movies WHERE code = %s", (text,))
+            all_parts = cur.fetchall()
+            if all_parts:
                 cur.execute("UPDATE users SET views = views + 1 WHERE user_id = %s", (user_id,)); conn.commit()
-                await update.message.reply_video(video=m[0], caption=f"🍿 **Kino kodi:** {text}\n\n@KinoHubPro kanalidan siz uchun maxsus.", parse_mode="Markdown")
+                for movie in all_parts:
+                    await update.message.reply_video(video=movie[0], caption=f"🍿 **Kino:** {movie[1]}\n🆔 **Kod:** {text}\n\n@KinoHubPro", parse_mode="Markdown")
             else:
-                await update.message.reply_text(f"😔 **Kechirasiz, {text} kodli kino hali bazaga kiritilmagan.**\n\nIltimos, kodni tekshirib ko'ring yoki kanalimizdan yangi kodlarni qidiring.", parse_mode="Markdown")
+                await update.message.reply_text(f"😔 **{text}** kodli kino topilmadi.", parse_mode="Markdown")
     finally: cur.close(); conn.close()
 
 # --- ADMIN BUYRUQLARI ---
 async def add_movie_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    
-    # context.args ichida kod va nom bo'lishi kerak
     if not update.message.reply_to_message or len(context.args) < 1:
-        await update.message.reply_text("⚠️ **Xato!** Videoga reply qilib `/add_movie kod Nomi` deb yozing.")
+        await update.message.reply_text("⚠️ Videoga reply qilib `/add_movie kod Nomi` deb yozing.")
         return
-
     code = context.args[0]
-    # Koddan keyingi barcha so'zlarni nom sifatida birlashtiramiz
-    movie_name = " ".join(context.args[1:]) if len(context.args) > 1 else f"Kino kodi: {code}"
-    
+    movie_name = " ".join(context.args[1:]) if len(context.args) > 1 else f"Kino {code}"
     reply = update.message.reply_to_message
     f_id = reply.video.file_id if reply.video else (reply.document.file_id if reply.document else None)
-    
     if f_id:
         conn = get_connection(); cur = conn.cursor()
-        try:
-            cur.execute("INSERT INTO movies (code, file_id, caption) VALUES (%s, %s, %s)", (code, f_id, movie_name))
-            conn.commit()
-            await update.message.reply_text(f"✅ **Saqlandi!**\n📦 Kod: `{code}`\n📝 Nomi: `{movie_name}`", parse_mode="Markdown")
-        except Exception as e:
-            conn.rollback()
-            await update.message.reply_text(f"❌ Xato: {e}")
-        finally: cur.close(); conn.close()
-    else:
-        await update.message.reply_text("❌ Xabarda video yoki fayl topilmadi.")
-
-from datetime import datetime, timedelta, timezone
+        cur.execute("INSERT INTO movies (code, file_id, caption) VALUES (%s, %s, %s)", (code, f_id, movie_name))
+        conn.commit(); cur.close(); conn.close()
+        await update.message.reply_text(f"✅ Saqlandi: `{code}`", parse_mode="Markdown")
+    else: await update.message.reply_text("❌ Video topilmadi.")
 
 async def set_premium_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Faqat siz (admin) ishlata olasiz
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    # Buyruq formati: /set_premium ID KUN
+    if update.effective_user.id != ADMIN_ID: return
     if len(context.args) < 2:
-        await update.message.reply_text("⚠️ **To'g'ri format:** `/set_premium ID KUN` \n\nMisol: `/set_premium 12345678 30` (30 kunga berish)", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ `/set_premium ID KUN`")
         return
-
     try:
-        user_id_to_give = int(context.args[0])
-        days_to_give = int(context.args[1])
-        
-        # Tugash vaqtini hozirgi vaqtdan boshlab hisoblash
-        expire_date = datetime.now(timezone.utc) + timedelta(days=days_to_give)
-        
-        conn = get_connection()
-        cur = conn.cursor()
-        
-        # Bazadagi 'premium_until' ustunini yangilash
-        cur.execute("UPDATE users SET premium_until = %s WHERE user_id = %s", (expire_date, user_id_to_give))
+        u_id = int(context.args[0]); days = int(context.args[1])
+        expire = datetime.now(timezone.utc) + timedelta(days=days)
+        conn = get_connection(); cur = conn.cursor()
+        cur.execute("UPDATE users SET premium_until = %s WHERE user_id = %s", (expire, u_id))
         conn.commit()
-        
         if cur.rowcount > 0:
-            formatted_date = expire_date.strftime('%d.%m.%Y %H:%M')
-            await update.message.reply_text(f"💎 **Premium muvaffaqiyatli berildi!**\n\n👤 ID: `{user_id_to_give}`\n📅 Muddat: `{days_to_give}` kun\n⏳ Tugash vaqti: `{formatted_date}` UTC", parse_mode="Markdown")
-            
-            # Foydalanuvchini tabriklash
-            try:
-                await context.bot.send_message(chat_id=user_id_to_give, text=f"🎉 **Tabriklaymiz!** Sizga {days_to_give} kunlik Premium statusi berildi!")
+            await update.message.reply_text(f"💎 ID {u_id} ga {days} kun premium berildi.")
+            try: await context.bot.send_message(chat_id=u_id, text="🎉 Sizga Premium berildi!")
             except: pass
-        else:
-            await update.message.reply_text("❌ Foydalanuvchi bazadan topilmadi!")
-            
-        cur.close()
-        conn.close()
-    except Exception as e:
-        await update.message.reply_text(f"❌ Xato: {e}")
+        else: await update.message.reply_text("❌ User topilmadi.")
+        cur.close(); conn.close()
+    except Exception as e: await update.message.reply_text(f"❌ Xato: {e}")
 
 async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID or not update.message.reply_to_message: return
     conn = get_connection(); cur = conn.cursor()
     cur.execute("SELECT user_id FROM users"); users = cur.fetchall()
     count = 0
-    await update.message.reply_text("🚀 Reklama tarqatilmoqda...")
+    msg = await update.message.reply_text("🚀 Yuborilmoqda...")
     for u in users:
         try: await update.message.reply_to_message.copy(chat_id=u[0]); count += 1; await asyncio.sleep(0.05)
         except: pass
+    await msg.edit_text(f"📢 Jami: {count} ta foydalanuvchiga yuborildi.")
     cur.close(); conn.close()
-    await update.message.reply_text(f"📢 **Reklama yakunlandi.**\nJami: {count} ta foydalanuvchiga yuborildi.")
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
-        await update.message.reply_text("👨‍💻 **Admin Boshqaruv Paneli:**", reply_markup=admin_kb(), parse_mode="Markdown")
+        await update.message.reply_text("👨‍💻 Admin Paneli:", reply_markup=admin_kb(), parse_mode="Markdown")
 
 async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; user_id = query.from_user.id
@@ -336,23 +295,20 @@ async def premium_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bal >= c:
             u = datetime.now(timezone.utc) + timedelta(days=d)
             cur.execute("UPDATE users SET balance = balance - %s, premium_until = %s WHERE user_id = %s", (c, u, user_id))
-            conn.commit(); await query.edit_message_text(f"✅ **Tabriklaymiz!** Premium {d} kunga faollashdi!")
+            conn.commit(); await query.edit_message_text(f"✅ Premium {d} kunga faollashdi!")
         else: await query.answer("❌ Ballaringiz yetarli emas!", show_alert=True)
         cur.close(); conn.close()
 
 async def check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_subscribed(update.callback_query.from_user.id, context.bot):
         await update.callback_query.message.delete()
-        await update.callback_query.message.reply_text("✅ **Rahmat!** A'zolik tasdiqlandi. Marhamat, botdan foydalanishingiz mumkin:", reply_markup=main_kb())
-    else: await update.callback_query.answer("❌ Hali ham kanallarga obuna bo'lmagansiz!", show_alert=True)
+        await update.callback_query.message.reply_text("✅ Marhamat:", reply_markup=main_kb())
+    else: await update.callback_query.answer("❌ Obuna bo'ling!", show_alert=True)
 
-# --- ASOSIY START ---
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     init_db()
     application = Application.builder().token(TOKEN).build()
-    
-    # Buyerruqlar (Handlers) tartibi muhim
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("add_movie", add_movie_reply))
@@ -360,8 +316,5 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("set_premium", set_premium_manual))
     application.add_handler(CallbackQueryHandler(premium_callback, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_callback, pattern="check"))
-    
-    # Matnli xabarlar handlerini oxiriga qo'yamiz
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
     application.run_polling()
