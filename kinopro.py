@@ -176,8 +176,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif BTN_HOME in text: await update.message.reply_text("🏠 Asosiy menyuga qaytdingiz.", reply_markup=main_kb())
 
         elif text == "➕ Kino qo'shish" and user_id == ADMIN_ID:
-            await update.message.reply_text("⚠️ **Kino qo'shish uchun:**\nVideoga yoki faylga reply qilib `/add_movie kod` deb yozing.", parse_mode="Markdown")
-
+            await update.message.reply_text(
+                "🎬 **Kino qo'shish bo'yicha yo'riqnoma:**\n\n"
+                "1. Kinoni botga yuboring yoki mavjud videoga **Reply** qiling.\n"
+                "2. Reply xabariga quyidagicha yozing:\n"
+                "`/add_movie kod Kino nomi va qismi` \n\n"
+                "💡 *Misol:* `/add_movie 101 Welcome to Derry 1-qism` \n\n"
+                "Shunda bot foydalanuvchiga kino kodi bilan birga nomini ham chiqarib beradi.", 
+                parse_mode="Markdown"
+            )
+            
         elif text == "❌ Kino o'chirish" and user_id == ADMIN_ID:
             await update.message.reply_text("🗑 **O'chirmoqchi bo'lgan kino kodini yozing:**"); context.user_data['step'] = 'del'
 
@@ -202,18 +210,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- ADMIN BUYRUQLARI ---
 async def add_movie_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    if not update.message.reply_to_message or not context.args:
-        await update.message.reply_text("⚠️ **Xato!** Faylga reply qilib `/add_movie kod` shaklida yozing.")
+    
+    # context.args ichida kod va nom bo'lishi kerak
+    if not update.message.reply_to_message or len(context.args) < 1:
+        await update.message.reply_text("⚠️ **Xato!** Videoga reply qilib `/add_movie kod Nomi` deb yozing.")
         return
+
     code = context.args[0]
+    # Koddan keyingi barcha so'zlarni nom sifatida birlashtiramiz
+    movie_name = " ".join(context.args[1:]) if len(context.args) > 1 else f"Kino kodi: {code}"
+    
     reply = update.message.reply_to_message
     f_id = reply.video.file_id if reply.video else (reply.document.file_id if reply.document else None)
+    
     if f_id:
         conn = get_connection(); cur = conn.cursor()
-        cur.execute("INSERT INTO movies (code, file_id, caption) VALUES (%s, %s, %s) ON CONFLICT (code) DO UPDATE SET file_id=EXCLUDED.file_id", (code, f_id, code))
-        conn.commit(); cur.close(); conn.close()
-        await update.message.reply_text(f"✅ **Muvaffaqiyatli saqlandi!**\nKod: `{code}`", parse_mode="Markdown")
-    else: await update.message.reply_text("❌ Reply qilingan xabarda video yoki hujjat topilmadi.")
+        try:
+            cur.execute("INSERT INTO movies (code, file_id, caption) VALUES (%s, %s, %s)", (code, f_id, movie_name))
+            conn.commit()
+            await update.message.reply_text(f"✅ **Saqlandi!**\n📦 Kod: `{code}`\n📝 Nomi: `{movie_name}`", parse_mode="Markdown")
+        except Exception as e:
+            conn.rollback()
+            await update.message.reply_text(f"❌ Xato: {e}")
+        finally: cur.close(); conn.close()
+    else:
+        await update.message.reply_text("❌ Xabarda video yoki fayl topilmadi.")
 
 async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID or not update.message.reply_to_message: return
