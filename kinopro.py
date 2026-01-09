@@ -13,6 +13,7 @@ BTN_KINO = "🎬 Kino olish"
 BTN_KABINET = "👤 Kabinet"
 BTN_BONUS = "🎁 Bonus"
 BTN_PREMIUM = "💎 Premium"
+BTN_ORDER = "✍️ Kino Buyurtma"
 BTN_STATS = "📊 Statistika"
 BTN_REF = "🔗 Referal"
 BTN_ADMIN_CONTACT = "📞 Admin"
@@ -65,9 +66,9 @@ def init_db():
 def main_kb():
     return ReplyKeyboardMarkup([
         [KeyboardButton(BTN_KINO), KeyboardButton(BTN_KABINET)],
-        [KeyboardButton(BTN_BONUS), KeyboardButton(BTN_PREMIUM)],
-        [KeyboardButton(BTN_STATS), KeyboardButton(BTN_REF)],
-        [KeyboardButton(BTN_ADMIN_CONTACT)],
+        [KeyboardButton(BTN_BONUS), KeyboardButton(BTN_ORDER)], # Yangi tugma shu yerda
+        [KeyboardButton(BTN_PREMIUM), KeyboardButton(BTN_STATS)],
+        [KeyboardButton(BTN_REF), KeyboardButton(BTN_ADMIN_CONTACT)],
     ], resize_keyboard=True)
 
 def admin_kb():
@@ -120,15 +121,45 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.execute("SELECT balance, views, premium_until FROM users WHERE user_id = %s", (user_id,))
             u = cur.fetchone()
             if u:
-                p = "Aktiv ✅" if u[2] and u[2] > datetime.now(timezone.utc) else "Oddiy foydalanuvchi 👤"
+                # 1. Premium holatini aniqlash
+                is_premium = u[2] and u[2] > datetime.now(timezone.utc)
+                p = "Aktiv ✅" if is_premium else "Oddiy foydalanuvchi 👤"
+                
+                # 2. Ism yoniga toj qo'shish
+                name = update.effective_user.first_name
+                display_name = f"{name} 👑" if is_premium else name
+                
+                # 3. Xabarni yuborish
                 await update.message.reply_text(
-                    f"👤 **Sizning shaxsiy kabinetingiz:**\n\n"
+                    f"👤 **{display_name} - Shaxsiy kabinetingiz:**\n\n"
                     f"🆔 **ID:** `{user_id}`\n"
                     f"💎 **Status:** {p}\n"
                     f"💰 **Balans:** {u[0]} ball\n"
                     f"🎬 **Ko'rilgan kinolar:** {u[1]} ta\n\n"
-                    f"Referal orqali ballar to'plang va Premiumga ega bo'ling!", parse_mode="Markdown")
+                    f"Referal orqali ballar to'plang va Premiumga ega bo'ling!", 
+                    parse_mode="Markdown"
+                )
 
+        # 5-funksiya: Kino buyurtma berish (Buni KABINETdan keyingi elif qilib qo'shing)
+        elif text == BTN_ORDER:
+            cur.execute("SELECT premium_until FROM users WHERE user_id = %s", (user_id,))
+            u = cur.fetchone()
+            if u[0] and u[0] > datetime.now(timezone.utc):
+                await update.message.reply_text("🎬 **Kino buyurtma berish:**\nIltimos, qidirayotgan kino nomini yozib yuboring. Adminlar uni tez orada topib yuklashadi.")
+                context.user_data['step'] = 'waiting_order'
+            else:
+                await update.message.reply_text("❌ **Kechirasiz!**\nKino buyurtma berish funksiyasi faqat **Premium** foydalanuvchilar uchun amal qiladi.")
+
+        # Buyurtma matnini qabul qilish
+        elif context.user_data.get('step') == 'waiting_order':
+            order_text = text
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🔔 **YANGI BUYURTMA!**\n\n👤 Foydalanuvchi: {update.effective_user.first_name}\n🆔 ID: `{user_id}`\n📝 Kino nomi: {order_text}"
+            )
+            await update.message.reply_text("✅ **Buyurtmangiz qabul qilindi!**\nAdminlar ko'rib chiqib bazaga qo'shishadi.")
+            context.user_data['step'] = None
+            
         # 2. PREMIUM
         elif BTN_PREMIUM in text:
             cur.execute("SELECT balance, premium_until FROM users WHERE user_id = %s", (user_id,))
@@ -236,6 +267,48 @@ async def add_movie_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Xabarda video yoki fayl topilmadi.")
 
+from datetime import datetime, timedelta, timezone
+
+async def set_premium_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Faqat siz (admin) ishlata olasiz
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # Buyruq formati: /set_premium ID KUN
+    if len(context.args) < 2:
+        await update.message.reply_text("⚠️ **To'g'ri format:** `/set_premium ID KUN` \n\nMisol: `/set_premium 12345678 30` (30 kunga berish)", parse_mode="Markdown")
+        return
+
+    try:
+        user_id_to_give = int(context.args[0])
+        days_to_give = int(context.args[1])
+        
+        # Tugash vaqtini hozirgi vaqtdan boshlab hisoblash
+        expire_date = datetime.now(timezone.utc) + timedelta(days=days_to_give)
+        
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Bazadagi 'premium_until' ustunini yangilash
+        cur.execute("UPDATE users SET premium_until = %s WHERE user_id = %s", (expire_date, user_id_to_give))
+        conn.commit()
+        
+        if cur.rowcount > 0:
+            formatted_date = expire_date.strftime('%d.%m.%Y %H:%M')
+            await update.message.reply_text(f"💎 **Premium muvaffaqiyatli berildi!**\n\n👤 ID: `{user_id_to_give}`\n📅 Muddat: `{days_to_give}` kun\n⏳ Tugash vaqti: `{formatted_date}` UTC", parse_mode="Markdown")
+            
+            # Foydalanuvchini tabriklash
+            try:
+                await context.bot.send_message(chat_id=user_id_to_give, text=f"🎉 **Tabriklaymiz!** Sizga {days_to_give} kunlik Premium statusi berildi!")
+            except: pass
+        else:
+            await update.message.reply_text("❌ Foydalanuvchi bazadan topilmadi!")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Xato: {e}")
+
 async def admin_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID or not update.message.reply_to_message: return
     conn = get_connection(); cur = conn.cursor()
@@ -284,7 +357,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("add_movie", add_movie_reply))
     application.add_handler(CommandHandler("send", admin_send))
-    
+    application.add_handler(CommandHandler("set_premium", set_premium_manual))
     application.add_handler(CallbackQueryHandler(premium_callback, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_callback, pattern="check"))
     
